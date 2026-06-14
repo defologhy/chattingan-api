@@ -6,6 +6,7 @@ const Users = sequelize.define("Users", {
   phone: {type: DataTypes.STRING(20), unique: true, allowNull: false},
   name: {type: DataTypes.STRING(100), allowNull: false},
   password: {type: DataTypes.STRING(255), allowNull: false},
+  last_seen: {type: DataTypes.DATE, allowNull: true},
 }, {
   tableName: "users",
   timestamps: true,

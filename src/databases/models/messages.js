@@ -6,7 +6,9 @@ const Messages = sequelize.define("Messages", {
   sender_id: {type: DataTypes.INTEGER, allowNull: false},
   receiver_id: {type: DataTypes.INTEGER, allowNull: false},
   message: {type: DataTypes.TEXT, allowNull: false},
+  is_read: {type: DataTypes.BOOLEAN, defaultValue: false},
   read_at: {type: DataTypes.DATE, allowNull: true},
+  deleted_by: {type: DataTypes.STRING(50), allowNull: true},
 }, {
   tableName: "messages",
   timestamps: true,

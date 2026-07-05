@@ -22,7 +22,7 @@ const register = async (request, response) => {
       {expiresIn: "7d"}
     );
     response.cookie("token", token, {httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000});
-    response.json({token, user: {id: user.id, phone, name}});
+    response.json({token, user: {id: user.id, phone, name, avatar: user.avatar}});
   } catch (error) {
     return response.status(400).json(errorHandlers(error, url));
   }

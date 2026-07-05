@@ -7,7 +7,11 @@ const getUsers = async (request, response) => {
   const url = process.env.APP_BASE_URL + request.originalUrl;
   try {
     const search = request.query.search || "";
-    const whereClause = {id: {[Op.ne]: request.user.id}};
+    const excludeUserId = request.query.exclude_user_id || null;
+    const whereClause = {};
+    if (excludeUserId) {
+      whereClause.id = { [Op.ne]: excludeUserId };
+    }
     if (search) {
       whereClause[Op.or] = [
         {name: {[Op.like]: `%${search}%`}},
@@ -16,7 +20,7 @@ const getUsers = async (request, response) => {
     }
     const users = await Users.findAll({
       where: whereClause,
-      attributes: ["id", "phone", "name", "last_seen"],
+      attributes: ["id", "phone", "name", "avatar", "last_seen"],
       order: [["name", "ASC"]],
     });
 
@@ -36,6 +40,7 @@ const getUsers = async (request, response) => {
       id: u.id,
       phone: u.phone,
       name: u.name,
+      avatar: u.avatar,
       last_seen: u.last_seen,
       unread_count: unreadCounts[u.id] || 0,
     }));

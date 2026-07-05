@@ -9,6 +9,8 @@ import logger from "./configurations/logger.js";
 import sequelize from "./databases/connections/sequelize.js";
 import Messages from "./databases/models/messages.js";
 import Users from "./databases/models/users.js";
+import GroupMembers from "./databases/models/group_members.js";
+import BlockedUsers from "./databases/models/blocked_users.js";
 import app from "./app.js";
 
 const server = http.createServer(app);
@@ -22,7 +24,12 @@ const io = new Server(server, {
 const onlineUsers = new Map();
 
 io.use((socket, next) => {
-  const token = socket.handshake.auth?.token;
+  let token = socket.handshake.auth?.token;
+  // Fallback ke cookie dari request header (untuk polling transport)
+  if (!token && socket.request?.headers?.cookie) {
+    const match = socket.request.headers.cookie.match(/(?:^|;\s*)token=([^;]*)/);
+    if (match) token = match[1];
+  }
   if (!token) return next(new Error("Authentication required"));
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -43,23 +50,46 @@ io.on("connection", (socket) => {
   // Kirim pesan
   socket.on("message:send", async (data) => {
     try {
-      const {receiverId, message} = data;
+      const {receiverId, message, messageType, replyToId} = data;
+      // Cek block (dua arah)
+      const userBlockedReceiver = await BlockedUsers.findOne({
+        where: {user_id: userId, blocked_user_id: receiverId},
+      });
+      if (userBlockedReceiver) {
+        return socket.emit("error", {message: "Pesan tidak terkirim. Anda telah memblokir pengguna ini."});
+      }
+      const userBlockedByReceiver = await BlockedUsers.findOne({
+        where: {user_id: receiverId, blocked_user_id: userId},
+      });
+      if (userBlockedByReceiver) {
+        return socket.emit("error", {message: "Pesan tidak terkirim. Anda telah diblokir oleh pengguna ini."});
+      }
       const newMsg = await Messages.create({
         sender_id: userId,
         receiver_id: receiverId,
         message,
+        message_type: messageType || "text",
+        reply_to_id: replyToId || null,
       });
+      const receiverSocketId = onlineUsers.get(Number(receiverId));
+      let deliveredAt = null;
+      if (receiverSocketId) {
+        deliveredAt = new Date();
+        await Messages.update({delivered_at: deliveredAt}, {where: {id: newMsg.id}});
+      }
       const result = {
         id: newMsg.id,
         sender_id: userId,
         sender_name: socket.user.name,
         receiver_id: receiverId,
         message,
+        message_type: newMsg.message_type,
+        reply_to_id: newMsg.reply_to_id,
         created_at: newMsg.created_at,
         is_read: false,
+        delivered_at: deliveredAt,
         read_at: null,
       };
-      const receiverSocketId = onlineUsers.get(Number(receiverId));
       if (receiverSocketId) {
         io.to(receiverSocketId).emit("message:new", result);
       }
@@ -67,6 +97,64 @@ io.on("connection", (socket) => {
     } catch (error) {
       logger.error(`Failed to send message: ${error.message}`);
       socket.emit("error", {message: "Failed to send message"});
+    }
+  });
+
+  // Edit pesan
+  socket.on("message:edit", async (data) => {
+    try {
+      const {messageId, message} = data;
+      const msg = await Messages.findByPk(messageId);
+      if (!msg || msg.sender_id !== userId) return;
+      await msg.update({message, updated_at: new Date()});
+      const result = {messageId, message, updated_at: msg.updated_at};
+      // Kirim ke penerima
+      if (msg.receiver_id) {
+        const receiverSocketId = onlineUsers.get(Number(msg.receiver_id));
+        if (receiverSocketId) io.to(receiverSocketId).emit("message:edited", result);
+      }
+      // Kirim ke semua anggota group
+      if (msg.group_id) {
+        const members = await GroupMembers.findAll({where: {group_id: msg.group_id}, raw: true});
+        members.forEach((member) => {
+          const memberSocketId = onlineUsers.get(Number(member.user_id));
+          if (memberSocketId) io.to(memberSocketId).emit("message:edited", result);
+        });
+      }
+      socket.emit("message:edited", result);
+    } catch (error) {
+      logger.error(`Failed to edit message: ${error.message}`);
+    }
+  });
+
+  // Reaksi pesan
+  socket.on("message:react", async (data) => {
+    try {
+      const {messageId, emoji} = data;
+      const msg = await Messages.findByPk(messageId);
+      if (!msg) return;
+      let reactions = msg.reactions || {};
+      if (emoji) {
+        reactions[String(userId)] = emoji;
+      } else {
+        delete reactions[String(userId)];
+      }
+      await msg.update({reactions});
+      const result = {messageId, reactions};
+      // Broadcast ke semua pihak terkait
+      const targets = [];
+      if (msg.receiver_id) targets.push(msg.receiver_id);
+      if (msg.group_id) {
+        const members = await GroupMembers.findAll({where: {group_id: msg.group_id}, raw: true});
+        members.forEach((m) => targets.push(m.user_id));
+      }
+      targets.push(msg.sender_id);
+      [...new Set(targets)].forEach((uid) => {
+        const sid = onlineUsers.get(Number(uid));
+        if (sid) io.to(sid).emit("message:reacted", result);
+      });
+    } catch (error) {
+      logger.error(`Failed to react: ${error.message}`);
     }
   });
 
@@ -132,6 +220,89 @@ io.on("connection", (socket) => {
       socket.emit("message:deleted", {messageId, mode});
     } catch (error) {
       logger.error(`Failed delete message: ${error.message}`);
+    }
+  });
+
+  // -- Group Chat Events --
+  socket.on("group:send", async (data) => {
+    try {
+      const {groupId, message, messageType, replyToId} = data;
+      // Validasi anggota group
+      const membership = await GroupMembers.findOne({
+        where: {group_id: groupId, user_id: userId},
+      });
+      if (!membership) {
+        return socket.emit("error", {message: "Anda bukan anggota group ini"});
+      }
+      const newMsg = await Messages.create({
+        sender_id: userId,
+        receiver_id: null,
+        group_id: groupId,
+        message,
+        message_type: messageType || "text",
+        reply_to_id: replyToId || null,
+      });
+      const result = {
+        id: newMsg.id,
+        sender_id: userId,
+        sender_name: socket.user.name,
+        group_id: groupId,
+        message,
+        message_type: newMsg.message_type,
+        reply_to_id: newMsg.reply_to_id,
+        created_at: newMsg.created_at,
+        is_read: false,
+        read_at: null,
+      };
+      // Kirim ke semua anggota group yang online
+      const members = await GroupMembers.findAll({where: {group_id: groupId}, raw: true});
+      members.forEach((member) => {
+        const memberSocketId = onlineUsers.get(Number(member.user_id));
+        if (memberSocketId) {
+          io.to(memberSocketId).emit("group:message", result);
+        }
+      });
+    } catch (error) {
+      logger.error(`Failed to send group message: ${error.message}`);
+      socket.emit("error", {message: `Failed to send group message: ${error.message}`});
+    }
+  });
+
+  socket.on("group:typing:start", async (data) => {
+    const {groupId} = data;
+    const members = await GroupMembers.findAll({where: {group_id: groupId}, raw: true});
+    members.forEach((member) => {
+      if (Number(member.user_id) !== userId) {
+        const memberSocketId = onlineUsers.get(Number(member.user_id));
+        if (memberSocketId) {
+          io.to(memberSocketId).emit("group:typing", {groupId, userId, isTyping: true});
+        }
+      }
+    });
+  });
+
+  socket.on("group:typing:stop", async (data) => {
+    const {groupId} = data;
+    const members = await GroupMembers.findAll({where: {group_id: groupId}, raw: true});
+    members.forEach((member) => {
+      if (Number(member.user_id) !== userId) {
+        const memberSocketId = onlineUsers.get(Number(member.user_id));
+        if (memberSocketId) {
+          io.to(memberSocketId).emit("group:typing", {groupId, userId, isTyping: false});
+        }
+      }
+    });
+  });
+
+  socket.on("group:read", async (data) => {
+    try {
+      const {groupId} = data;
+      await Messages.update(
+        {is_read: true, read_at: new Date()},
+        {where: {group_id: groupId, sender_id: {[Op.ne]: userId}, is_read: false}}
+      );
+    } catch (error) {
+      logger.error(`Failed group mark as read: ${error.message}`);
     }
   });
 

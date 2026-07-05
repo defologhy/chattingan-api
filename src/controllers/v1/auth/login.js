@@ -23,8 +23,8 @@ const login = async (request, response) => {
       process.env.JWT_SECRET,
       {expiresIn: "7d"}
     );
-    response.cookie("token", token, {httpOnly: false, maxAge: 7 * 24 * 60 * 60 * 1000});
-    response.json({token, user: {id: user.id, phone: user.phone, name: user.name}});
+    response.cookie("token", token, {httpOnly: true, secure: false, sameSite: "lax", maxAge: 7 * 24 * 60 * 60 * 1000});
+    response.json({token, user: {id: user.id, phone: user.phone, name: user.name, avatar: user.avatar}});
   } catch (error) {
     return response.status(400).json(errorHandlers(error, url));
   }

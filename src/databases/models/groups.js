@@ -1,18 +1,17 @@
 import {DataTypes} from "sequelize";
 import sequelize from "../connections/sequelize.js";
 
-const Users = sequelize.define("Users", {
+const Groups = sequelize.define("Groups", {
   id: {type: DataTypes.INTEGER, primaryKey: true, autoIncrement: true},
-  phone: {type: DataTypes.STRING(20), unique: true, allowNull: false},
   name: {type: DataTypes.STRING(100), allowNull: false},
-  password: {type: DataTypes.STRING(255), allowNull: false},
+  description: {type: DataTypes.TEXT, allowNull: true},
   avatar: {type: DataTypes.STRING, allowNull: true},
-  last_seen: {type: DataTypes.DATE, allowNull: true},
+  created_by: {type: DataTypes.INTEGER, allowNull: false},
 }, {
-  tableName: "users",
+  tableName: "groups",
   timestamps: true,
   createdAt: "created_at",
-  updatedAt: false,
+  updatedAt: "updated_at",
 });
 
-export default Users;
+export default Groups;

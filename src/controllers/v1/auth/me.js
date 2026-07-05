@@ -8,7 +8,7 @@ const me = async (request, response) => {
     const token = request.cookies?.token || request.headers?.authorization?.split(" ")[1];
     if (!token) return response.status(401).json({error: "Unauthorized"});
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await Users.findByPk(decoded.id, {attributes: ["id", "phone", "name"]});
+    const user = await Users.findByPk(decoded.id, {attributes: ["id", "phone", "name", "avatar"]});
     if (!user) return response.status(404).json({error: "User not found"});
     response.json({user});
   } catch (error) {

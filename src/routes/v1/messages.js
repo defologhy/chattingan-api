@@ -1,9 +1,11 @@
 import express from "express";
 import getUsers from "../../controllers/v1/messages/get-users.js";
 import getMessages from "../../controllers/v1/messages/get-messages.js";
+import getGroupMessages from "../../controllers/v1/messages/get-group-messages.js";
 import deleteMessage from "../../controllers/v1/messages/delete-message.js";
 import unreadCounts from "../../controllers/v1/messages/unread-counts.js";
 import searchMessages from "../../controllers/v1/messages/search-messages.js";
+import uploadMedia from "../../controllers/v1/messages/upload-media.js";
 import auth from "../../middlewares/auth.js";
 
 const router = new express.Router();
@@ -18,6 +20,14 @@ router.get("/search", auth, async (request, response) => {
 
 router.get("/unread", auth, async (request, response) => {
   return unreadCounts(request, response);
+});
+
+router.post("/upload", auth, async (request, response) => {
+  return uploadMedia(request, response);
+});
+
+router.get("/group/:groupId", auth, async (request, response) => {
+  return getGroupMessages(request, response);
 });
 
 router.get("/:userId", auth, async (request, response) => {
